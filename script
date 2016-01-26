@@ -1,0 +1,464 @@
+## pyGetAssessorParcels.py ##
+
+# Created By: Greg Bunce, Maricopa County Election Dept
+# Create Date: Sept 21 2015
+# Last Update: Sept 21 2015
+
+# Description/Purpose:   
+# --------------------------------------------------------------------------------------
+# This script automates the process of getting the latest version of the Assessor’s GIS parcel data.  The geography portion of their data is separate from the tabular portion of their data.
+# The processing for this script is done locally in C:\temp\ParcelData.
+# Note: Each step of the process is logged in a text file, and can be viewed at any time (even when running):  C:\temp\ParcelData\getParcelsLog.txt.
+# --------------------------------------------------------------------------------------
+# Step 1: Delete all existing data in folder.
+# Step 2: Create new file geodatabase, add table and appropriate fields.
+# Step 3: Copy Shapefile from Assessor’s shared directory into local temp directory.
+# Step 4: Download and extract (unzip) tabular portion of data via Assessor’s secure FTP site.
+# Step 5: Load tabular data into appropriate fields in newly-created FGDB table
+# Step 6: Join newly-created tabular data from FGDB to Shapefile in local directory
+# Step 7: Export Shapefile (retain the join) to the scratch FGDB in local directory.
+# Step 8: Kick-off .NET-console-app file to load this data into SDE. 
+# --------------------------------------------------------------------------------------
+
+
+
+## IMPORT MODULES ##
+import shutil
+import arcpy
+from arcpy import env
+import urllib2
+import gzip
+import os
+import time
+
+# SETUP ENVIRONMENT ##
+env.workspace = "C:/temp/ParcelData/ScratchFGeodatabase.gdb"
+
+
+
+## DELETE EXISTING DATA ##
+# if the parcel shapefile is in the directory, delete it
+if arcpy.Exists("C:/temp/ParcelData/ParcelsAll.shp"):
+    arcpy.Delete_management("C:/temp/ParcelData/ParcelsAll.shp")
+
+## delete all files in the directory
+shutil.rmtree('C:/temp/ParcelData')
+
+
+
+## REBUILD FOLDER ##
+## create a new folder in the directory
+newpath = 'C:/temp/ParcelData' 
+if not os.path.exists(newpath):
+    os.makedirs(newpath)
+
+
+
+## CREATE LOG FILE ##
+# create a text-file log to write the progress and trap errors
+completeName = os.path.join(newpath, "getParcelsLog.txt") 
+logfile = open(completeName, "w")
+#writeToFile = "Started get-assessor-parcels at " + time.strftime("%c")
+logfile.write(time.strftime("%c") + " - Started get-assessor-parcels process.")
+logfile.close()
+print(time.strftime("%c") + " - Started get-assessor-parcels process.")
+
+
+
+## CREATE AND SETUP FILE GEODATABASE - ADD TABLE AND FIELDS ##
+# create scratch FGDB to hold and process data until loaded into SDE
+out_folder_path = "C:/temp/ParcelData"
+out_name = "ScratchFGeodatabase.gdb"
+arcpy.CreateFileGDB_management(out_folder_path, out_name)
+
+# create table in the file geodatabase
+out_folder = "C:/temp/ParcelData/ScratchFGeodatabase.gdb"
+out_name = "ParcelsTable"
+
+# execute CreateTable
+arcpy.CreateTable_management(out_folder, out_name)
+
+# add fields to the table
+inFeatures = "ParcelsTable"
+#arcpy.AddField_management(inFeatures, "FID", "GUID")
+arcpy.AddField_management(inFeatures, "APN", "TEXT", "", "", 9)
+arcpy.AddField_management(inFeatures, "LOT", "TEXT", "", "", 6)
+arcpy.AddField_management(inFeatures, "HSENO", "TEXT", "", "", 6)
+arcpy.AddField_management(inFeatures, "STDIR", "TEXT", "", "", 2)
+arcpy.AddField_management(inFeatures, "STNAME", "TEXT", "", "", 40)
+arcpy.AddField_management(inFeatures, "STTYPE", "TEXT", "", "", 12)
+arcpy.AddField_management(inFeatures, "STSUFX", "TEXT", "", "", 10)
+arcpy.AddField_management(inFeatures, "STPOSTDIR", "TEXT", "", "", 10)
+arcpy.AddField_management(inFeatures, "CITY", "TEXT", "", "", 30) # using text b/c inconsistent data from source (convert to double later)
+#arcpy.AddField_management(inFeatures, "ZIP", "DOUBLE")
+arcpy.AddField_management(inFeatures, "ZIP", "TEXT", "", "", 5)
+arcpy.AddField_management(inFeatures, "PUC", "TEXT", "", "", 4)
+arcpy.AddField_management(inFeatures, "OWNER", "TEXT", "", "", 45)
+arcpy.AddField_management(inFeatures, "OWNERADDR1", "TEXT", "", "", 40)
+arcpy.AddField_management(inFeatures, "OWNERADDR2", "TEXT", "", "", 40)
+arcpy.AddField_management(inFeatures, "OWNERCITY", "TEXT", "", "", 40)
+arcpy.AddField_management(inFeatures, "OWNERSTATE", "TEXT", "", "", 2)
+arcpy.AddField_management(inFeatures, "OWNERZIP", "TEXT", "", "", 5)
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Created file geodatabase and added table with required fields.")
+logfile.close()
+print(time.strftime("%X") + " - Created file geodatabase and added table with required fields.")
+
+
+
+## COPY SHAPEFILE ##
+# copy the shapefile from the assessor's shared directory
+arcpy.Copy_management("S:/pub/cov/property/parcels/Parcels_All.shp", "C:/temp/ParcelData/ParcelsAll.shp")
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Copied the parcels shapefile from assessor shared directory to local folder.")
+logfile.close()
+print(time.strftime("%X") + " - Copied the parcels shapefile from assessor shared directory to local temp folder.")
+
+
+
+## DOWNLOAD AND EXTRACT DATA FROM FTP SITE ##
+# download the necessary files from assessor's ftp site and put them on local drive for further python processing, ie: extracting, combining, and joining to shapefile
+# set up proxy settings
+proxy = urllib2.ProxyHandler({'http': '1*6.4*.*2.2**:**8*'}) # can also use 1*6.4*.*2.23:**8* #changed for boulder app submission - change back#
+usrname = "hidden"
+passwrd = "hidden"
+
+# url proxy handler
+opener = urllib2.build_opener(proxy)
+urllib2.install_opener(opener)
+
+
+# get 100 apn book
+url100 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_100.dat.gz";
+
+# use with to close file when done
+with open('C:/temp/ParcelData/st99050_100.dat.gz','wb') as f:
+    f.write(urllib2.urlopen(url100).read())
+    f.close()
+
+# extract the gzip file
+with gzip.open('C:/temp/ParcelData/st99050_100.dat.gz', 'rb') as f_in, open('C:/temp/ParcelData/st99050_100.dat', 'wb') as f_out:
+    shutil.copyfileobj(f_in, f_out)
+
+logfile = open(completeName, "a") # use "a" to append 
+logfile.write('\n' + time.strftime("%X") + " - Finished downloading and extracting 100 book parcel zipfile data.")
+logfile.close()
+print(time.strftime("%X") + " - Finished downloading and extracting 100 book parcel zipfile data.")
+
+
+# get 200 apn book
+url200 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_200.dat.gz";
+
+with open('C:/temp/ParcelData/st99050_200.dat.gz','wb') as f:
+    f.write(urllib2.urlopen(url200).read())
+    f.close()
+
+# extract the gzip file
+with gzip.open('C:/temp/ParcelData/st99050_200.dat.gz', 'rb') as f_in, open('C:/temp/ParcelData/st99050_200.dat', 'wb') as f_out:
+    shutil.copyfileobj(f_in, f_out)
+
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished downloading and extracting 200 book parcel zipfile data.")
+logfile.close()
+print(time.strftime("%X") + " - Finished downloading and extracting 200 book parcel zipfile data.")
+
+
+# get 300 apn book
+url300 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_300.dat.gz";
+
+with open('C:/temp/ParcelData/st99050_300.dat.gz','wb') as f:
+    f.write(urllib2.urlopen(url300).read())
+    f.close()
+
+# extract the gzip file
+with gzip.open('C:/temp/ParcelData/st99050_300.dat.gz', 'rb') as f_in, open('C:/temp/ParcelData/st99050_300.dat', 'wb') as f_out:
+    shutil.copyfileobj(f_in, f_out)
+
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished downloading and extracting 300 book parcel zipfile data.")
+logfile.close()
+print(time.strftime("%X") + " - Finished downloading and extracting 300 book parcel zipfile data.")
+
+
+# get 400 apn book
+url400 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_400.dat.gz";
+
+with open('C:/temp/ParcelData/st99050_400.dat.gz','wb') as f:
+    f.write(urllib2.urlopen(url400).read())
+    f.close()
+
+# extract the gzip file
+with gzip.open('C:/temp/ParcelData/st99050_400.dat.gz', 'rb') as f_in, open('C:/temp/ParcelData/st99050_400.dat', 'wb') as f_out:
+    shutil.copyfileobj(f_in, f_out)
+
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished downloading and extracting 400 book parcel zipfile data.")
+logfile.close()
+print(time.strftime("%X") + " - Finished downloading and extracting 400 book parcel zipfile data.")
+
+
+# get 500 apn book
+url500 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_500.dat.gz";
+
+with open('C:/temp/ParcelData/st99050_500.dat.gz','wb') as f:
+    f.write(urllib2.urlopen(url500).read())
+    f.close()
+
+# extract the gzip file
+with gzip.open('C:/temp/ParcelData/st99050_500.dat.gz', 'rb') as f_in, open('C:/temp/ParcelData/st99050_500.dat', 'wb') as f_out:
+    shutil.copyfileobj(f_in, f_out)
+
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished downloading and extracting 500 book parcel zipfile data.")
+logfile.close()
+print(time.strftime("%X") + " - Finished downloading and extracting 500 book parcel zipfile data.")
+
+
+
+## LOAD DATA INTO TABLE ##
+## load .dat data in file geodatabase table ##
+
+## 100 ##
+# begin loading 100 book into gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Begin loading 100 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Begin loading 100 book into FGDB table.")
+
+# read the lines in the .dat file and create a list array from the data, used for importing into table
+with open("C:/temp/ParcelData/st99050_100.dat", "r") as ins:
+    list = []
+    for line in ins:
+        if line.startswith('100'):
+            list.append(line)
+        
+# loop through row/record/parcel in the .dat file and populate newly created table with corresponding values
+for line in list:
+    fieldArray = []
+    fieldArray.append(line.split(";"))
+
+    # get the first three characters in the apn field and check if numeric
+    dblApn = fieldArray[0][1].strip()[:3]
+
+    # if apn is numeric, insert values into table
+    if dblApn > 0:
+        # create insert cursor for table edits
+        with arcpy.da.InsertCursor("C:/temp/ParcelData/ScratchFGeodatabase.gdb/ParcelsTable", ["APN","LOT","PUC","HSENO","STDIR","STNAME","STTYPE","STSUFX","STPOSTDIR","CITY","ZIP","OWNER",
+            "OWNERADDR1","OWNERADDR2","OWNERCITY","OWNERSTATE","OWNERZIP"]) as cursor:
+            # insert data into newley created row with assessor parcel values (slicing [:5] is getting the first 5 characters in that field)
+            cursor.insertRow([str(fieldArray[0][1]).strip(),str(fieldArray[0][11]).strip(),str(fieldArray[0][3]).strip(),str(fieldArray[0][14]).strip(),str(fieldArray[0][15]).strip()[:2],str(fieldArray[0][16]).strip(),
+                              str(fieldArray[0][17]).strip(),str(fieldArray[0][18]).strip(),str(fieldArray[0][19]).strip(),str(fieldArray[0][21]).strip(),str(fieldArray[0][22]).strip()[:5],str(fieldArray[0][23]).strip(),
+                              str(fieldArray[0][29]).strip(),str(fieldArray[0][30]).strip(),str(fieldArray[0][31]).strip(),str(fieldArray[0][32]).strip()[:2],str(fieldArray[0][33]).strip()[:5]])
+            
+# finished loading the 100 book into the gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished loading 100 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Finished loading 100 book into FGDB table.")
+
+
+## 200 ##
+# begin loading 200 book into gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Begin loading 200 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Begin loading 200 book into FGDB table.")
+
+# read the lines in the .dat file and create a list array from the data, used for importing into table
+with open("C:/temp/ParcelData/st99050_200.dat", "r") as ins:
+    list = []
+    for line in ins:
+        if line.startswith('100'):
+            list.append(line)
+        
+# loop through row/record/parcel in the .dat file and populate newly created table with corresponding values
+for line in list:
+    fieldArray = []
+    fieldArray.append(line.split(";"))
+
+    # get the first three characters in the apn field and check if numeric
+    dblApn = fieldArray[0][1].strip()[:3]
+
+    # if apn is numeric, insert values into table
+    if dblApn > 0:
+        # create insert cursor for table edits
+        with arcpy.da.InsertCursor("C:/temp/ParcelData/ScratchFGeodatabase.gdb/ParcelsTable", ["APN","LOT","PUC","HSENO","STDIR","STNAME","STTYPE","STSUFX","STPOSTDIR","CITY","ZIP","OWNER",
+            "OWNERADDR1","OWNERADDR2","OWNERCITY","OWNERSTATE","OWNERZIP"]) as cursor:
+            # insert data into newley created row with assessor parcel values (slicing [:5] is getting the first 5 characters in that field)
+            cursor.insertRow([str(fieldArray[0][1]).strip(),str(fieldArray[0][11]).strip(),str(fieldArray[0][3]).strip(),str(fieldArray[0][14]).strip(),str(fieldArray[0][15]).strip()[:2],str(fieldArray[0][16]).strip(),
+                              str(fieldArray[0][17]).strip(),str(fieldArray[0][18]).strip(),str(fieldArray[0][19]).strip(),str(fieldArray[0][21]).strip(),str(fieldArray[0][22]).strip()[:5],str(fieldArray[0][23]).strip(),
+                              str(fieldArray[0][29]).strip(),str(fieldArray[0][30]).strip(),str(fieldArray[0][31]).strip(),str(fieldArray[0][32]).strip()[:2],str(fieldArray[0][33]).strip()[:5]])
+
+# finished loading the 200 book into the gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished loading 200 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Finished loading 200 book into FGDB table.")
+
+
+## 300 ##
+# begin loading 300 book into gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Begin loading 300 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Begin loading 300 book into FGDB table.")
+
+# read the lines in the .dat file and create a list array from the data, used for importing into table
+with open("C:/temp/ParcelData/st99050_300.dat", "r") as ins:
+    list = []
+    for line in ins:
+        if line.startswith('100'):
+            list.append(line)
+        
+# loop through row/record/parcel in the .dat file and populate newly created table with corresponding values
+for line in list:
+    fieldArray = []
+    fieldArray.append(line.split(";"))
+
+    # get the first three characters in the apn field and check if numeric
+    dblApn = fieldArray[0][1].strip()[:3]
+
+    # if apn is numeric, insert values into table
+    if dblApn > 0:
+        # create insert cursor for table edits
+        with arcpy.da.InsertCursor("C:/temp/ParcelData/ScratchFGeodatabase.gdb/ParcelsTable", ["APN","LOT","PUC","HSENO","STDIR","STNAME","STTYPE","STSUFX","STPOSTDIR","CITY","ZIP","OWNER",
+            "OWNERADDR1","OWNERADDR2","OWNERCITY","OWNERSTATE","OWNERZIP"]) as cursor:
+            # insert data into newley created row with assessor parcel values (slicing [:5] is getting the first 5 characters in that field)
+            cursor.insertRow([str(fieldArray[0][1]).strip(),str(fieldArray[0][11]).strip(),str(fieldArray[0][3]).strip(),str(fieldArray[0][14]).strip(),str(fieldArray[0][15]).strip()[:2],str(fieldArray[0][16]).strip(),
+                              str(fieldArray[0][17]).strip(),str(fieldArray[0][18]).strip(),str(fieldArray[0][19]).strip(),str(fieldArray[0][21]).strip(),str(fieldArray[0][22]).strip()[:5],str(fieldArray[0][23]).strip(),
+                              str(fieldArray[0][29]).strip(),str(fieldArray[0][30]).strip(),str(fieldArray[0][31]).strip(),str(fieldArray[0][32]).strip()[:2],str(fieldArray[0][33]).strip()[:5]])
+
+# finished loading the 300 book into the gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished loading 300 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Finished loading 300 book into FGDB table.")
+
+
+## 400 ##
+# begin loading 400 book into gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Begin loading 400 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Begin loading 400 book into FGDB table.")
+
+# read the lines in the .dat file and create a list array from the data, used for importing into table
+with open("C:/temp/ParcelData/st99050_400.dat", "r") as ins:
+    list = []
+    for line in ins:
+        if line.startswith('100'):
+            list.append(line)
+        
+# loop through row/record/parcel in the .dat file and populate newly created table with corresponding values
+for line in list:
+    fieldArray = []
+    fieldArray.append(line.split(";"))
+
+    # get the first three characters in the apn field and check if numeric
+    dblApn = fieldArray[0][1].strip()[:3]
+
+    # if apn is numeric, insert values into table
+    if dblApn > 0:
+        # create insert cursor for table edits
+        with arcpy.da.InsertCursor("C:/temp/ParcelData/ScratchFGeodatabase.gdb/ParcelsTable", ["APN","LOT","PUC","HSENO","STDIR","STNAME","STTYPE","STSUFX","STPOSTDIR","CITY","ZIP","OWNER",
+            "OWNERADDR1","OWNERADDR2","OWNERCITY","OWNERSTATE","OWNERZIP"]) as cursor:
+            # insert data into newley created row with assessor parcel values (slicing [:5] is getting the first 5 characters in that field)
+            cursor.insertRow([str(fieldArray[0][1]).strip(),str(fieldArray[0][11]).strip(),str(fieldArray[0][3]).strip(),str(fieldArray[0][14]).strip(),str(fieldArray[0][15]).strip()[:2],str(fieldArray[0][16]).strip(),
+                              str(fieldArray[0][17]).strip(),str(fieldArray[0][18]).strip(),str(fieldArray[0][19]).strip(),str(fieldArray[0][21]).strip(),str(fieldArray[0][22]).strip()[:5],str(fieldArray[0][23]).strip(),
+                              str(fieldArray[0][29]).strip(),str(fieldArray[0][30]).strip(),str(fieldArray[0][31]).strip(),str(fieldArray[0][32]).strip()[:2],str(fieldArray[0][33]).strip()[:5]])
+
+# finished loading the 400 book into the gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished loading 400 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Finished loading 400 book into FGDB table.")
+
+  
+## 500 ##
+# begin loading 500 book into gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Begin loading 500 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Begin loading 500 book into FGDB table.")
+
+# read the lines in the .dat file and create a list array from the data, used for importing into table
+with open("C:/temp/ParcelData/st99050_500.dat", "r") as ins:
+    list = []
+    for line in ins:
+        if line.startswith('100'):
+            list.append(line)
+        
+# loop through row/record/parcel in the .dat file and populate newly created table with corresponding values
+for line in list:
+    fieldArray = []
+    fieldArray.append(line.split(";"))
+
+    # get the first three characters in the apn field and check if numeric
+    dblApn = fieldArray[0][1].strip()[:3]
+
+    # if apn is numeric, insert values into table
+    if dblApn > 0:
+        # create insert cursor for table edits
+        with arcpy.da.InsertCursor("C:/temp/ParcelData/ScratchFGeodatabase.gdb/ParcelsTable", ["APN","LOT","PUC","HSENO","STDIR","STNAME","STTYPE","STSUFX","STPOSTDIR","CITY","ZIP","OWNER",
+            "OWNERADDR1","OWNERADDR2","OWNERCITY","OWNERSTATE","OWNERZIP"]) as cursor:
+            # insert data into newley created row with assessor parcel values (slicing [:5] is getting the first 5 characters in that field)
+            cursor.insertRow([str(fieldArray[0][1]).strip(),str(fieldArray[0][11]).strip(),str(fieldArray[0][3]).strip(),str(fieldArray[0][14]).strip(),str(fieldArray[0][15]).strip()[:2],str(fieldArray[0][16]).strip(),
+                              str(fieldArray[0][17]).strip(),str(fieldArray[0][18]).strip(),str(fieldArray[0][19]).strip(),str(fieldArray[0][21]).strip(),str(fieldArray[0][22]).strip()[:5],str(fieldArray[0][23]).strip(),
+                              str(fieldArray[0][29]).strip(),str(fieldArray[0][30]).strip(),str(fieldArray[0][31]).strip(),str(fieldArray[0][32]).strip()[:2],str(fieldArray[0][33]).strip()[:5]])
+
+# finished loading the 500 book into the gdb table
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished loading 500 book into FGDB table.")
+logfile.close()
+print(time.strftime("%X") + " - Finished loading 500 book into FGDB table.")
+
+
+
+## JOIN DATA TO SHAPEFILE ##
+## join the newly-created table to the newly-copied parcel feature class ##
+# create feature layer in order to perform join
+arcpy.MakeFeatureLayer_management("C:/temp/ParcelData/ParcelsAll.shp", "parcelLayer")
+
+# join on apn field
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Begin joining the table to the shapefile.")
+logfile.close()
+print(time.strftime("%X") + " - Begin joining the table to the shapefile.")
+
+arcpy.AddJoin_management("parcelLayer", "APN", "C:/temp/ParcelData/ScratchFGeodatabase.gdb/ParcelsTable", "APN")
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished joining the table to the shapefile.")
+logfile.close()
+print(time.strftime("%X") + " - Finished joining the table to the shapefile.")
+
+
+
+## EXPORT DATA TO FILE GEODATABASE ##
+# export joined layer to new feature class in file geodatabase
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Begin exporting the joined shapefile to the scratch file geodatabase.")
+logfile.close()
+print(time.strftime("%X") + " - Begin exporting the joined shapefile to the scratch file geodatabase.")
+
+arcpy.FeatureClassToFeatureClass_conversion("parcelLayer", "C:/temp/ParcelData/ScratchFGeodatabase.gdb", "ParcelsJoined")  
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%X") + " - Finished exporting the joined shapefile to the scratch file geodatabase.")
+logfile.close()
+print(time.strftime("%X") + " - Finished exporting the joined shapefile to the scratch file geodatabase.")
+
+
+
+## process complete
+logfile = open(completeName, "a")
+logfile.write('\n' + time.strftime("%c") + " - Finished running pyGetAssessorParcels.py.  Process complete!")
+logfile.close()
+print(time.strftime("%c") + " - Finished running pyGetAssessorParcels.py.  Process complete!")
+
+# close the log text file
+logfile.close()
+
+
+
+## KICK-OFF PROCESS TO LOAD PARCELS INTO SDE ##
+os.system("F:/GIS/Dev/TFS/Console/ArcMap/10_3/conGISUpdateParcelSDE/conUpdateParcelsSDE/bin/Release/conUpdateParcelsSDE.bat") #with parameters
+#os.system("F:/GIS/Dev/TFS/Console/ArcMap/10_3/conGISUpdateParcelSDE/conUpdateParcelsSDE/bin/Release/conUpdateParcelsSDE.exe")
