@@ -1,6 +1,6 @@
 ## pyGetAssessorParcels.py ##
 
-# Created By: Greg Bunce, Maricopa County Election Dept
+# Created By: Greg Bunce
 # Create Date: Sept 21 2015
 # Last Update: Sept 21 2015
 
@@ -129,7 +129,7 @@ urllib2.install_opener(opener)
 
 
 # get 100 apn book
-url100 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_100.dat.gz";
+url100 = "ftp://usrname:passwrd@***.*2.**.*3/tables/st99050_100.dat.gz";
 
 # use with to close file when done
 with open('C:/temp/ParcelData/st99050_100.dat.gz','wb') as f:
@@ -147,7 +147,7 @@ print(time.strftime("%X") + " - Finished downloading and extracting 100 book par
 
 
 # get 200 apn book
-url200 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_200.dat.gz";
+url200 = "ftp://usrname:passwrd@***.*2.**.*3/tables/st99050_200.dat.gz";
 
 with open('C:/temp/ParcelData/st99050_200.dat.gz','wb') as f:
     f.write(urllib2.urlopen(url200).read())
@@ -164,7 +164,7 @@ print(time.strftime("%X") + " - Finished downloading and extracting 200 book par
 
 
 # get 300 apn book
-url300 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_300.dat.gz";
+url300 = "ftp://usrname:passwrd@***.*2.**.*3/tables/st99050_300.dat.gz";
 
 with open('C:/temp/ParcelData/st99050_300.dat.gz','wb') as f:
     f.write(urllib2.urlopen(url300).read())
@@ -181,7 +181,7 @@ print(time.strftime("%X") + " - Finished downloading and extracting 300 book par
 
 
 # get 400 apn book
-url400 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_400.dat.gz";
+url400 = "ftp://usrname:passwrd@***.*2.**.*3/tables/st99050_400.dat.gz";
 
 with open('C:/temp/ParcelData/st99050_400.dat.gz','wb') as f:
     f.write(urllib2.urlopen(url400).read())
@@ -198,7 +198,7 @@ print(time.strftime("%X") + " - Finished downloading and extracting 400 book par
 
 
 # get 500 apn book
-url500 = "ftp://usrname:passwrd@***.42.**.23/tables/st99050_500.dat.gz";
+url500 = "ftp://usrname:passwrd@***.*2.**.*3/tables/st99050_500.dat.gz";
 
 with open('C:/temp/ParcelData/st99050_500.dat.gz','wb') as f:
     f.write(urllib2.urlopen(url500).read())
